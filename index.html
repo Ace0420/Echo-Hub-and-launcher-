@@ -1,0 +1,302 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <meta name="description" content="Echo Hub - Accessible game launcher for blind and visually impaired users">
+    <title>Echo Hub</title>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
+        body {
+            font-family: Arial, sans-serif;
+            background: #000;
+            color: #fff;
+            overflow: hidden;
+            height: 100vh;
+            width: 100vw;
+        }
+
+        #mainButton {
+            width: 100%;
+            height: 100%;
+            background: linear-gradient(135deg, #1a1a2e 0%, #16213e 100%);
+            border: none;
+            cursor: pointer;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            justify-content: center;
+            transition: all 0.3s ease;
+            position: relative;
+        }
+
+        #mainButton:active {
+            background: linear-gradient(135deg, #0f3460 0%, #16213e 100%);
+        }
+
+        #mainButton.listening {
+            background: linear-gradient(135deg, #e94560 0%, #533483 100%);
+            animation: pulse 1.5s infinite;
+        }
+
+        @keyframes pulse {
+            0%, 100% { transform: scale(1); }
+            50% { transform: scale(1.02); }
+        }
+
+        .status-text {
+            font-size: clamp(2rem, 8vw, 4rem);
+            font-weight: bold;
+            text-align: center;
+            padding: 2rem;
+            text-shadow: 2px 2px 4px rgba(0,0,0,0.5);
+        }
+
+        .subtitle {
+            font-size: clamp(1rem, 4vw, 1.5rem);
+            opacity: 0.8;
+            margin-top: 1rem;
+            text-align: center;
+            padding: 0 2rem;
+        }
+
+        .game-list {
+            position: absolute;
+            bottom: 0;
+            left: 0;
+            right: 0;
+            background: rgba(0,0,0,0.8);
+            padding: 1rem;
+            font-size: 0.9rem;
+            opacity: 0.6;
+            max-height: 30vh;
+            overflow-y: auto;
+        }
+
+        .game-item {
+            margin: 0.5rem 0;
+            padding: 0.5rem;
+        }
+
+        .hidden {
+            display: none;
+        }
+
+        @media (prefers-reduced-motion: reduce) {
+            * {
+                animation: none !important;
+                transition: none !important;
+            }
+        }
+    </style>
+</head>
+<body>
+    <button id="mainButton" aria-label="Tap anywhere to speak your command">
+        <div class="status-text" id="statusText">TAP TO SPEAK</div>
+        <div class="subtitle" id="subtitle">Say "Help" for commands</div>
+    </button>
+
+    <div class="game-list" id="gameList" role="list">
+        <div role="listitem" class="game-item">🎮 Echo Dungeon</div>
+        <div role="listitem" class="game-item">🃏 Soul Chain Blackjack</div>
+        <div role="listitem" class="game-item">🎴 Voice Solitaire</div>
+        <div role="listitem" class="game-item">👥 Echo Social</div>
+    </div>
+
+    <script>
+        const games = {
+            'dungeon': {
+                name: 'Echo Dungeon',
+                url: 'https://ace0420.github.io/Echo-Dungeon-V5-/',
+                keywords: ['dungeon', 'crawler', 'adventure']
+            },
+            'blackjack': {
+                name: 'Soul Chain Blackjack',
+                url: 'https://ace0420.github.io/Soul_Chain_Blackjack/',
+                keywords: ['blackjack', 'cards', 'twenty one', '21']
+            },
+            'solitaire': {
+                name: 'Voice Solitaire',
+                url: 'https://ace0420.github.io/Voice-Solitaire/',
+                keywords: ['solitaire', 'cards', 'patience']
+            },
+            'social': {
+                name: 'Echo Social',
+                url: 'https://ace0420.github.io/Echo-Social-/',
+                keywords: ['social', 'community', 'chat']
+            }
+        };
+
+        let isListening = false;
+        let recognition = null;
+        let synthesis = window.speechSynthesis;
+        let hasSpokenWelcome = false;
+
+        const mainButton = document.getElementById('mainButton');
+        const statusText = document.getElementById('statusText');
+        const subtitle = document.getElementById('subtitle');
+
+        function speak(text, callback) {
+            if (!synthesis) {
+                console.error('Speech synthesis not available');
+                return;
+            }
+            
+            if (synthesis.speaking) {
+                synthesis.cancel();
+            }
+
+            const utterance = new SpeechSynthesisUtterance(text);
+            utterance.rate = 0.9;
+            utterance.pitch = 1;
+            utterance.volume = 1;
+            
+            if (callback) {
+                utterance.onend = callback;
+            }
+            
+            synthesis.speak(utterance);
+        }
+
+        function updateStatus(text, subtext = '') {
+            statusText.textContent = text;
+            subtitle.textContent = subtext;
+        }
+
+        function vibrate(pattern = [50]) {
+            if ('vibrate' in navigator) {
+                navigator.vibrate(pattern);
+            }
+        }
+
+        function initSpeechRecognition() {
+            if (!('webkitSpeechRecognition' in window) && !('SpeechRecognition' in window)) {
+                speak('Sorry, voice recognition is not supported on this device.');
+                updateStatus('Voice not supported', 'Please use a compatible browser');
+                return false;
+            }
+
+            const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
+            recognition = new SpeechRecognition();
+            recognition.continuous = false;
+            recognition.interimResults = false;
+            recognition.lang = 'en-US';
+
+            recognition.onstart = () => {
+                isListening = true;
+                mainButton.classList.add('listening');
+                updateStatus('LISTENING...', 'Speak now');
+                vibrate([50]);
+            };
+
+            recognition.onresult = (event) => {
+                const transcript = event.results[0][0].transcript.toLowerCase().trim();
+                handleCommand(transcript);
+            };
+
+            recognition.onerror = (event) => {
+                console.error('Speech recognition error:', event.error);
+                isListening = false;
+                mainButton.classList.remove('listening');
+                updateStatus('TAP TO SPEAK', 'Say "Help" for commands');
+                
+                if (event.error === 'no-speech') {
+                    speak('I didn\'t hear anything. Tap to try again.');
+                } else if (event.error === 'not-allowed') {
+                    speak('Microphone access denied. Please enable microphone permissions.');
+                }
+            };
+
+            recognition.onend = () => {
+                isListening = false;
+                mainButton.classList.remove('listening');
+            };
+
+            return true;
+        }
+
+        function handleCommand(command) {
+            console.log('Command received:', command);
+            vibrate([30, 30, 30]);
+
+            if (command.includes('help')) {
+                const helpText = 'You can say: Open Echo Dungeon, Play Blackjack, Play Solitaire, Open Echo Social, or What can I play.';
+                speak(helpText);
+                updateStatus('HELP', helpText);
+                return;
+            }
+
+            if (command.includes('what') && (command.includes('play') || command.includes('game'))) {
+                const gameList = Object.values(games).map(g => g.name).join(', ');
+                speak(`Available games: ${gameList}`);
+                updateStatus('GAMES', gameList);
+                return;
+            }
+
+            for (const [key, game] of Object.entries(games)) {
+                const matchFound = game.keywords.some(keyword => command.includes(keyword));
+                
+                if (matchFound || command.includes(game.name.toLowerCase())) {
+                    speak(`Opening ${game.name}`, () => {
+                        window.location.href = game.url;
+                    });
+                    updateStatus('OPENING...', game.name);
+                    vibrate([100, 50, 100]);
+                    return;
+                }
+            }
+
+            speak('I didn\'t understand that. Say Help for available commands.');
+            updateStatus('TAP TO SPEAK', 'Say "Help" for commands');
+        }
+
+        function startListening() {
+            if (!recognition) {
+                if (!initSpeechRecognition()) return;
+            }
+
+            if (!isListening) {
+                try {
+                    recognition.start();
+                } catch (error) {
+                    console.error('Error starting recognition:', error);
+                    speak('Error starting voice recognition. Please try again.');
+                }
+            }
+        }
+
+        mainButton.addEventListener('click', () => {
+            startListening();
+        });
+
+        window.addEventListener('load', () => {
+            if (!hasSpokenWelcome) {
+                setTimeout(() => {
+                    speak('Welcome to Echo Hub. Tap anywhere to speak your command. Say Help for options.');
+                    hasSpokenWelcome = true;
+                }, 500);
+            }
+            
+            initSpeechRecognition();
+        });
+
+        // Register service worker for offline functionality
+        if ('serviceWorker' in navigator) {
+            window.addEventListener('load', () => {
+                navigator.serviceWorker.register('/sw.js')
+                    .then(registration => {
+                        console.log('Service Worker registered:', registration.scope);
+                    })
+                    .catch(err => {
+                        console.log('Service Worker registration failed:', err);
+                    });
+            });
+        }
+    </script>
+</body>
+</html>
